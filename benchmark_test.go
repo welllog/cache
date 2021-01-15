@@ -85,6 +85,7 @@ func writeToCache(b *testing.B, keyCountCale uint64) {
 func writeToCacheWithExp(b *testing.B, keyCountCale uint64) {
 	cache := NewCache(keyCountCale, time.Second)
 	defer cache.StopCleanExpired()
+
 	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
