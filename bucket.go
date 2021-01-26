@@ -88,20 +88,25 @@ type bucket struct {
 func newBucket(pool *slicePool) *bucket {
 	return &bucket{
 		slicePool: pool,
-		current:   unsafe.Pointer(newSlice(100)),
 	}
 }
 
 // Append之间存在并发调用
-func (b *bucket) Append(str string) bool {
+func (b *bucket) Append(str string) {
 	oldP := atomic.LoadPointer(&b.current)
-	//if oldP == nil {
-	//   return false
-	//}
-
+	if oldP == nil {
+		first := b.slicePool.Get()
+		oldP = unsafe.Pointer(first)
+		if !atomic.CompareAndSwapPointer(&b.current, nil, oldP) {
+			b.slicePool.Put(first)
+			oldP = atomic.LoadPointer(&b.current)
+		}
+	}
 	oldS := (*slice)(oldP)
+
+	
 	if oldS.Append(str) {
-		return true
+		return
 	}
 
 	// 写满时，重新获取一个slice
@@ -116,12 +121,9 @@ func (b *bucket) Append(str string) bool {
 		} else { // 其它线程重新加载
 			b.slicePool.Put(s)
 			s = (*slice)(atomic.LoadPointer(&b.current))
-			//if s == nil {
-			//    return false
-			//}
 		}
 		if s.Append(str) {
-			return true
+			return
 		}
 		// 仍然未写入(理论上存在)
 		oldP = unsafe.Pointer(s)
@@ -130,15 +132,15 @@ func (b *bucket) Append(str string) bool {
 }
 
 func (b *bucket) StopReceiving() {
-	s := (*slice)(b.current)
-	b.full = append(b.full, s)
-	b.current = nil
+	if b.current != nil {
+		s := (*slice)(b.current)
+		b.full = append(b.full, s)
+		b.current = nil
+	}
 }
 
 func (b *bucket) reset() {
-	b.current = unsafe.Pointer(b.full[0])
-	b.full[0] = nil
-	for i := 1; i < len(b.full); i++ {
+	for i := 0; i < len(b.full); i++ {
 		b.slicePool.Put(b.full[i])
 		b.full[i] = nil
 	}

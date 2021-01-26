@@ -1,19 +1,22 @@
 package cache
 
 import (
-	"hash/maphash"
+	"bufio"
+	"bytes"
+	"io"
+	"strconv"
 	"time"
 )
 
 type Cache struct {
 	cache   []*shared
 	timer   *timer
-	mask    uint64
-	indexFn func(str string, mask uint64) uint64
+	mask    uint32
+	indexFn func(str string, mask uint32) uint32
 	stop    chan struct{}
 }
 
-func NewCache(keyCountScale uint64, cleanInterval time.Duration) *Cache {
+func NewCache(keyCountScale uint32, cleanInterval time.Duration) *Cache {
 	n := keyCountScale / _avgKeys
 	// 将n设为2^x
 	n = power2(n)
@@ -28,12 +31,12 @@ func NewCache(keyCountScale uint64, cleanInterval time.Duration) *Cache {
 		stop: make(chan struct{}),
 	}
 	if n == 1 {
-		out.indexFn = func(str string, mask uint64) uint64 {
+		out.indexFn = func(str string, mask uint32) uint32 {
 			return 0
 		}
 	} else {
-		out.indexFn = func(str string, mask uint64) uint64 {
-			return hashNum(str) & mask
+		out.indexFn = func(str string, mask uint32) uint32 {
+			return fnv32(str) & mask
 		}
 	}
 	out.timer = newTimer(cleanInterval, time.Now().UnixNano(), out)
@@ -102,20 +105,77 @@ func (c *Cache) StopCleanExpired() {
 	close(c.stop)
 }
 
+func (c *Cache) SaveBaseType(w io.Writer) {
+	nw := bufio.NewWriter(w)
+	for _, v := range c.cache {
+		v.SaveBaseType(nw)
+	}
+	_ = nw.Flush()
+}
+
+func (c *Cache) LoadBaseType(r io.Reader) {
+	now := time.Now().UnixNano()
+	scanner := bufio.NewScanner(r)
+	// 每两行是一条完整记录
+	var row int
+	var skip bool
+	var key string
+	var expAt int64
+	for scanner.Scan() {
+		
+		if (row & 1) == 0 { // 第一行
+			b := scanner.Bytes()
+			index := bytes.Index(b, []byte{_delim})
+			expb := b[:index]
+			expAt, _ = strconv.ParseInt(string(expb), 10, 64)
+			if expAt >= 0 && expAt < now {
+				row++
+				skip = true
+				continue
+			}
+			
+			keyb := b[index + 1:]
+			key = string(keyb)
+		} else { // 第二行
+			if !skip {
+				b := scanner.Bytes()
+				index := bytes.Index(b, []byte{_delim})
+				idb := b[:index]
+				valueb := b[index + 1:]
+				value := baseValueRestore(idb[0], valueb)
+				if value != nil {
+					if expAt < 0 {
+						c.Set(key, value)
+					} else {
+						c.timer.Add(key, expAt)
+						c.cache[c.indexFn(key, c.mask)].Set(key, value, expAt)
+					}
+				}
+			}
+			skip = false
+		}
+		row++
+	}
+}
+
 func (c *Cache) runCleanExpired() {
 	go func() {
 		c.timer.Run(c.stop)
 	}()
 }
 
-func hashNum(str string) uint64 {
-	h := new(maphash.Hash)
-	h.SetSeed(_seed)
-	_, _ = h.WriteString(str)
-	return h.Sum64()
+const _prime32 = uint32(16777619)
+
+func fnv32(str string) uint32 {
+	hash := uint32(2166136261)
+	for i := 0; i < len(str); i++ {
+		hash *= _prime32
+		hash ^= uint32(str[i])
+	}
+	return hash
 }
 
-func power2(n uint64) uint64 {
+func power2(n uint32) uint32 {
 	if n <= 1 {
 		return 1
 	}

@@ -2,7 +2,6 @@ package cache
 
 import (
 	"errors"
-	"hash/maphash"
 )
 
 const (
@@ -11,7 +10,6 @@ const (
 )
 
 var (
-	_seed  = maphash.MakeSeed()
 	ErrNil = errors.New("cache missing")
 )
 

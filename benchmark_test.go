@@ -10,11 +10,45 @@ import (
 
 var message = "haha"
 
+func BenchmarkTimer_Add(b *testing.B) {
+	now := time.Now().UnixNano()
+	timer := newTimer(time.Second, time.Now().UnixNano(), nil)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		timer.Add(fmt.Sprintf("key-%d", i), now)
+		now += 1000000000
+	}
+}
+
+func BenchmarkTimer_Add_Concurrent(b *testing.B) {
+	now := time.Now().UnixNano()
+	timer := newTimer(time.Second, time.Now().UnixNano(), nil)
+	
+	b.RunParallel(func(pb *testing.PB) {
+		b.ReportAllocs()
+		for pb.Next() {
+			timer.Add(fmt.Sprintf("key-%d", rand.Intn(b.N)), now)
+			now += 1000000000
+		}
+	})
+}
+
 func BenchmarkWriteToCacheWith1Shard(b *testing.B) {
 	m := "haha"
 	cache := NewCache(600, time.Second)
 	defer cache.StopCleanExpired()
 
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		cache.Set(fmt.Sprintf("key-%d", i), m)
+	}
+}
+
+func BenchmarkWriteToCacheWithMultiShard(b *testing.B) {
+	m := "haha"
+	cache := NewCache(100000, time.Second)
+	defer cache.StopCleanExpired()
+	
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cache.Set(fmt.Sprintf("key-%d", i), m)
@@ -32,10 +66,21 @@ func BenchmarkWriteToCacheWith1ShardAndExp(b *testing.B) {
 	}
 }
 
+func BenchmarkWriteToCacheWithMultiShardAndExp(b *testing.B) {
+	m := "haha"
+	cache := NewCache(100000, time.Second)
+	defer cache.StopCleanExpired()
+	
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		cache.SetEx(fmt.Sprintf("key-%d", i), m, i)
+	}
+}
+
 func BenchmarkWriteToCache(b *testing.B) {
 	for _, count := range []int{10000, 100000, 500000} {
 		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			writeToCache(b, uint64(count))
+			writeToCache(b, uint32(count))
 		})
 	}
 }
@@ -43,7 +88,7 @@ func BenchmarkWriteToCache(b *testing.B) {
 func BenchmarkWriteToCacheWithExp(b *testing.B) {
 	for _, count := range []int{10000, 100000, 500000} {
 		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			writeToCacheWithExp(b, uint64(count))
+			writeToCacheWithExp(b, uint32(count))
 		})
 	}
 }
@@ -51,7 +96,7 @@ func BenchmarkWriteToCacheWithExp(b *testing.B) {
 func BenchmarkReadFromCache(b *testing.B) {
 	for _, count := range []int{600, 10000, 100000, 500000} {
 		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			readFromCache(b, uint64(count))
+			readFromCache(b, uint32(count))
 		})
 	}
 }
@@ -59,12 +104,12 @@ func BenchmarkReadFromCache(b *testing.B) {
 func BenchmarkReadFromCacheNonExistentKeys(b *testing.B) {
 	for _, count := range []int{600, 10000, 100000, 500000} {
 		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			readFromCacheNonExistentKeys(b, uint64(count))
+			readFromCacheNonExistentKeys(b, uint32(count))
 		})
 	}
 }
 
-func writeToCache(b *testing.B, keyCountCale uint64) {
+func writeToCache(b *testing.B, keyCountCale uint32) {
 	cache := NewCache(keyCountCale, time.Second)
 	defer cache.StopCleanExpired()
 
@@ -82,7 +127,7 @@ func writeToCache(b *testing.B, keyCountCale uint64) {
 	})
 }
 
-func writeToCacheWithExp(b *testing.B, keyCountCale uint64) {
+func writeToCacheWithExp(b *testing.B, keyCountCale uint32) {
 	cache := NewCache(keyCountCale, time.Second)
 	defer cache.StopCleanExpired()
 
@@ -100,7 +145,7 @@ func writeToCacheWithExp(b *testing.B, keyCountCale uint64) {
 	})
 }
 
-func readFromCache(b *testing.B, keyCountCale uint64) {
+func readFromCache(b *testing.B, keyCountCale uint32) {
 	cache := NewCache(keyCountCale, time.Second)
 	defer cache.StopCleanExpired()
 
@@ -118,7 +163,7 @@ func readFromCache(b *testing.B, keyCountCale uint64) {
 	})
 }
 
-func readFromCacheNonExistentKeys(b *testing.B, keyCountCale uint64) {
+func readFromCacheNonExistentKeys(b *testing.B, keyCountCale uint32) {
 	cache := NewCache(keyCountCale, time.Second)
 	defer cache.StopCleanExpired()
 

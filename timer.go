@@ -48,7 +48,13 @@ func (t *timer) Add(key string, expAt int64) {
 	t.mu.RLock()
 	delay := expAt - t.curTime
 	if delay <= t.interval { // 加入当前的timer
-		slot := (t.curSlot + int(truncate(delay, t.tick) / t.tick)) & t.slotMask
+		var moveSlot int
+		if delay <= t.tick {
+			moveSlot = 1
+		} else {
+			moveSlot = int(truncate(delay, t.tick) / t.tick)
+		}
+		slot := (t.curSlot + moveSlot) & t.slotMask
 		t.slots[slot].Append(key)
 		t.mu.RUnlock()
 
@@ -105,7 +111,7 @@ func (t *timer) advanceClock(now int64) {
 
 func (t *timer) scan(slot int) {
 	t.slots[slot].StopReceiving()
-	cleanKeys := make(map[uint64][]string, t.cache.mask + 1)
+	cleanKeys := make(map[uint32][]string, t.cache.mask + 1)
 	for _, s := range t.slots[slot].full {
 		for index, key := range s.keys {
 			if key != "" {

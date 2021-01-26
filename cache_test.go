@@ -2,6 +2,7 @@ package cache
 
 import (
 	"fmt"
+	"os"
 	"testing"
 	"time"
 )
@@ -28,4 +29,36 @@ func TestSetEx(t *testing.T) {
 	fmt.Println(cache.cache[0].entries["test"])
 	time.Sleep(2 * time.Second)
 	fmt.Println(cache.cache[0].entries["test"])
+}
+
+func TestCache_SaveBaseType(t *testing.T) {
+	cache := NewCache(3000, time.Millisecond)
+	cache.Set("t1", "asdsadsa")
+	cache.Set("t2", 12)
+	cache.SetEx("t3", 12, 1)
+	time.Sleep(time.Second)
+	cache.SetEx("t4", true, 10)
+	f, err := os.Create("c.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cache.SaveBaseType(f)
+}
+
+func TestCache_LoadBaseType(t *testing.T) {
+	f, err := os.Open("c.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	
+	cache := NewCache(3000, time.Millisecond)
+	cache.LoadBaseType(f)
+	
+	for _, v := range cache.cache {
+		for key, entry := range v.entries {
+			fmt.Println(key, "-----", entry.value, "-----", entry.expAt)
+		}
+	}
 }
