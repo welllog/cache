@@ -2,9 +2,8 @@ package cache
 
 import (
 	"bufio"
-	"bytes"
+	"compress/zlib"
 	"io"
-	"strconv"
 	"time"
 )
 
@@ -106,55 +105,48 @@ func (c *Cache) StopCleanExpired() {
 }
 
 func (c *Cache) SaveBaseType(w io.Writer) {
-	nw := bufio.NewWriter(w)
+	bw := bufio.NewWriter(w)
+	defer bw.Flush()
+	
+	zw, _ := zlib.NewWriterLevel(bw, zlib.BestSpeed)
+	defer zw.Close()
+	
 	for _, v := range c.cache {
-		v.SaveBaseType(nw)
+		v.SaveBaseType(zw)
 	}
-	_ = nw.Flush()
 }
 
 func (c *Cache) LoadBaseType(r io.Reader) {
+	br := bufio.NewReader(r)
+	
+	zr, _ := zlib.NewReader(br)
+	defer  zr.Close()
+	
 	now := time.Now().UnixNano()
-	scanner := bufio.NewScanner(r)
-	// 每两行是一条完整记录
-	var row int
-	var skip bool
-	var key string
-	var expAt int64
-	for scanner.Scan() {
+	for {
+		kv := &kvItem{}
+		if !kv.InitMetaFromReader(zr) {
+			return
+		}
 		
-		if (row & 1) == 0 { // 第一行
-			b := scanner.Bytes()
-			index := bytes.Index(b, []byte{_delim})
-			expb := b[:index]
-			expAt, _ = strconv.ParseInt(string(expb), 10, 64)
-			if expAt >= 0 && expAt < now {
-				row++
-				skip = true
-				continue
+		expAt := kv.GetExpireAt()
+		if expAt >= 0 && expAt < now {
+			kv.DiscardData(zr)
+		} else {
+			key, value, err := kv.ResolveKvFromReader(zr)
+			if err != nil {
+				return
 			}
 			
-			keyb := b[index + 1:]
-			key = string(keyb)
-		} else { // 第二行
-			if !skip {
-				b := scanner.Bytes()
-				index := bytes.Index(b, []byte{_delim})
-				idb := b[:index]
-				valueb := b[index + 1:]
-				value := baseValueRestore(idb[0], valueb)
-				if value != nil {
-					if expAt < 0 {
-						c.Set(key, value)
-					} else {
-						c.timer.Add(key, expAt)
-						c.cache[c.indexFn(key, c.mask)].Set(key, value, expAt)
-					}
+			if key != "" && value != nil {
+				if expAt < 0 {
+					c.Set(key, value)
+				} else {
+					c.timer.Add(key, expAt)
+					c.cache[c.indexFn(key, c.mask)].Set(key, value, expAt)
 				}
 			}
-			skip = false
 		}
-		row++
 	}
 }
 

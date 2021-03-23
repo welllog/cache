@@ -103,15 +103,13 @@ func (s *shared) SaveBaseType(w io.Writer) {
 	s.mu.RLock()
 	for k, v := range s.entries {
 		if v.expAt > now || v.expAt < 0{
-			flushBase2Disk(k, v.value, v.expAt, w)
+			kv := &kvItem{}
+			if kv.Build(k, v.value, v.expAt) {
+				kv.SaveTo(w)
+			}
 		}
 	}
 	s.mu.RUnlock()
-}
-
-func (s *shared) LoadBaseType(r io.Reader) {
-
-
 }
 
 func (s *shared) delBefore(key string, expAt int64) {

@@ -1,43 +1,124 @@
 package cache
 
 import (
-    "fmt"
+    "encoding/binary"
     "io"
-    "strconv"
+    "math"
 )
 
-const _delim = ' '
+var DefaultOrder = binary.BigEndian
 
 const (
-    BYTE = uint8(iota)
+    BYTE = uint8(iota + 65)
     STRING
     INT
+    UINT
+    BOOL
+    FLOAT32
+    FLOAT64
     INT8
     INT16
     INT32
     INT64
-    UINT
     UINT8
     UINT16
     UINT32
     UINT64
-    FLOAT32
-    FLOAT64
-    BOOL
+    UNEXPECT
 )
 
-func flushBase2Disk(key string, value interface{}, expAt int64, w io.Writer) {
-    id, data := baseTypeValue(value)
-    if id != nil {  // 只保存基本类型的数据
-        w.Write([]byte(strconv.FormatInt(expAt, 10)))
-        w.Write([]byte{_delim})
-        w.Write([]byte(key))
-        w.Write([]byte(fmt.Sprintln()))
-        w.Write(id)
-        w.Write([]byte{_delim})
-        w.Write(data)
-        w.Write([]byte(fmt.Sprintln()))
+type kvItem struct {
+    expire []byte      // int64  => 8byte
+    totalSize []byte   // uint32 => 4byte
+    keySize []byte     // uint16 => 2byte
+    key []byte
+    id  byte
+    value []byte
+}
+
+func (k *kvItem) Build(key string, value interface{}, expAt int64) bool {
+    k.key = []byte(key)
+    ksize := len(k.key)
+    if ksize > 65535 {
+        return false
     }
+    
+    k.id, k.value = baseTypeValue(value)
+    if k.id == UNEXPECT {
+        return false
+    }
+    
+    if len(k.value) > 524288000 {
+        return false
+    }
+    
+    k.expire = make([]byte, 8)
+    DefaultOrder.PutUint64(k.expire, uint64(expAt))
+    
+    k.totalSize = make([]byte, 4)
+    tsize := uint32(3 + ksize + len(k.value))
+    DefaultOrder.PutUint32(k.totalSize, tsize)
+    
+    k.keySize = make([]byte, 2)
+    DefaultOrder.PutUint16(k.keySize, uint16(ksize))
+    
+    return true
+}
+
+func (k *kvItem) SaveTo(w io.Writer) {
+    _,_ = w.Write(k.expire)
+    _,_ = w.Write(k.totalSize)
+    _,_ = w.Write(k.keySize)
+    _,_ = w.Write(k.key)
+    _,_ = w.Write([]byte{k.id})
+    _,_ = w.Write(k.value)
+}
+
+func (k *kvItem) InitMetaFromReader(r io.Reader) bool {
+    k.expire = make([]byte, 8)
+    _, err := io.ReadAtLeast(r, k.expire, 8)
+    if err != nil {
+        return false
+    }
+    
+    k.totalSize = make([]byte, 4)
+    _, err = io.ReadAtLeast(r, k.totalSize, 4)
+    if err != nil {
+        return false
+    }
+    return true
+}
+
+func (k *kvItem) GetExpireAt() int64 {
+    return int64(DefaultOrder.Uint64(k.expire))
+}
+
+func (k *kvItem) DiscardData(r io.Reader) {
+    _,_ = io.CopyN(Discard, r, int64(DefaultOrder.Uint32(k.totalSize)))
+}
+
+func (k *kvItem) ResolveKvFromReader(r io.Reader) (key string, value interface{}, err error) {
+    k.keySize = make([]byte, 2)
+    _, err = io.ReadAtLeast(r, k.keySize, 2)
+    if err != nil {
+        return
+    }
+    
+    ksize := int(DefaultOrder.Uint16(k.keySize))
+    k.key = make([]byte, ksize)
+    _, err = io.ReadAtLeast(r, k.key, ksize)
+    if err != nil {
+        return
+    }
+    
+    rest := int(DefaultOrder.Uint32(k.totalSize)) - ksize - 2
+    payload := make([]byte, rest)
+    _, err = io.ReadAtLeast(r, payload, rest)
+    if err != nil {
+        return
+    }
+    value = baseValueRestore(payload[0], payload[1:])
+    return string(k.key), value, nil
 }
 
 func baseValueRestore(id byte, data []byte) interface{} {
@@ -51,95 +132,125 @@ func baseValueRestore(id byte, data []byte) interface{} {
         return string(data)
 
     case INT:
-        res, _ := strconv.Atoi(string(data))
-        return res
+        return int(DefaultOrder.Uint64(data))
 
     case BOOL:
-        res, _ := strconv.ParseBool(string(data))
-        return res
+        return data[0] != 0
 
     case FLOAT32:
-        res, _ := strconv.ParseFloat(string(data), 32)
-        return float32(res)
+        return math.Float32frombits(DefaultOrder.Uint32(data))
 
     case FLOAT64:
-        res, _ := strconv.ParseFloat(string(data), 64)
-        return res
-
-    case UINT:
-        res, _ := strconv.ParseUint(string(data), 10, 64)
-        return uint(res)
+        return math.Float64frombits(DefaultOrder.Uint64(data))
 
     case INT64:
-        res, _ := strconv.ParseInt(string(data), 10, 64)
-        return res
+        return int64(DefaultOrder.Uint64(data))
 
     case INT32:
-        res, _ := strconv.ParseInt(string(data), 10, 32)
-        return int32(res)
-
-    case UINT32:
-        res, _ := strconv.ParseUint(string(data), 10, 32)
-        return uint32(res)
-        
-    case UINT64:
-        res, _ := strconv.ParseUint(string(data), 10, 64)
-        return res
-
-    case INT8:
-        res, _ := strconv.ParseInt(string(data), 10, 8)
-        return int8(res)
+        return int32(DefaultOrder.Uint32(data))
 
     case INT16:
-        res, _ := strconv.ParseInt(string(data), 10, 16)
-        return int16(res)
+        return int16(DefaultOrder.Uint16(data))
+
+    case INT8:
+        return int8(data[0])
+
+    case UINT64:
+        return DefaultOrder.Uint64(data)
+
+    case UINT32:
+        return DefaultOrder.Uint32(data)
+
+    case UINT16:
+        return DefaultOrder.Uint16(data)
 
     case UINT8:
-        res, _ := strconv.ParseUint(string(data), 10, 8)
-        return uint8(res)
-        
-    case UINT16:
-        res, _ := strconv.ParseUint(string(data), 10, 16)
-        return uint16(res)
+        return data[0]
 
+    case UINT:
+        return uint(DefaultOrder.Uint64(data))
+        
     default:
         return nil
     }
 }
 
-func baseTypeValue(value interface{}) ([]byte, []byte) {
+func baseTypeValue(value interface{}) (byte, []byte) {
+    var id byte
+    var data []byte
     switch v := value.(type) {
     case []byte:
-        return []byte{BYTE}, v
+        id = BYTE
+        data = v
     case string:
-        return []byte{STRING}, []byte(v)
+        id = STRING
+        data = []byte(v)
     case int:
-        return []byte{INT}, []byte(strconv.Itoa(v))
+        id = INT
+        data = make([]byte, 8)
+        DefaultOrder.PutUint64(data, uint64(v))
     case bool:
-        return []byte{BOOL}, []byte(strconv.FormatBool(v))
+        id = BOOL
+        data = make([]byte, 1)
+        if v {
+            data[0] = 1
+        } else {
+            data[0] = 0
+        }
     case float32:
-        return []byte{FLOAT32}, []byte(strconv.FormatFloat(float64(v), 'x', -1, 64))
+        id = FLOAT32
+        data = make([]byte, 4)
+        DefaultOrder.PutUint32(data, math.Float32bits(v))
     case float64:
-        return []byte{FLOAT64}, []byte(strconv.FormatFloat(v, 'x', -1, 64))
-    case uint:
-        return []byte{UINT}, []byte(strconv.FormatUint(uint64(v), 10))
+        id = FLOAT64
+        data = make([]byte, 8)
+        DefaultOrder.PutUint64(data, math.Float64bits(v))
     case int64:
-        return []byte{INT64}, []byte(strconv.FormatInt(v, 10))
+        id = INT64
+        data = make([]byte, 8)
+        DefaultOrder.PutUint64(data, uint64(v))
     case int32:
-        return []byte{INT32}, []byte(strconv.FormatInt(int64(v), 10))
-    case uint32:
-        return []byte{UINT32}, []byte(strconv.FormatUint(uint64(v), 10))
-    case uint64:
-        return []byte{UINT64}, []byte(strconv.FormatUint(v, 10))
-    case int8:
-        return []byte{INT8}, []byte(strconv.FormatInt(int64(v), 10))
+        id = INT32
+        data = make([]byte, 4)
+        DefaultOrder.PutUint32(data, uint32(v))
     case int16:
-        return []byte{INT16}, []byte(strconv.FormatInt(int64(v), 10))
-    case uint8:
-        return []byte{UINT8}, []byte(strconv.FormatUint(uint64(v), 10))
+        id = INT16
+        data = make([]byte, 2)
+        DefaultOrder.PutUint16(data, uint16(v))
+    case int8:
+        id = INT8
+        data = make([]byte, 1)
+        data[0] = byte(v)
+    case uint64:
+        id = UINT64
+        data = make([]byte, 8)
+        DefaultOrder.PutUint64(data, v)
+    case uint32:
+        id = UINT32
+        data = make([]byte, 4)
+        DefaultOrder.PutUint32(data, v)
     case uint16:
-        return []byte{UINT16}, []byte(strconv.FormatUint(uint64(v), 10))
+        id = UINT16
+        data = make([]byte, 2)
+        DefaultOrder.PutUint16(data, v)
+    case uint8:
+        id = UINT8
+        data = make([]byte, 1)
+        data[0] = v
+    case uint:
+        id = UINT
+        data = make([]byte, 8)
+        DefaultOrder.PutUint64(data, uint64(v))
     default:
-        return nil, nil
+        return UNEXPECT, nil
     }
+    return id, data
+}
+
+var Discard io.Writer = discard{}
+
+type discard struct{}
+
+func (discard) Write(p []byte) (int, error) {
+    return len(p), nil
 }
