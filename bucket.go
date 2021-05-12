@@ -47,6 +47,9 @@ func (sp *slicePool) Put(s *slice) {
 		return
 	}
 	s.idx = 0
+	for i := range s.keys {
+		s.keys[i] = ""
+	}
 	sp.pool = append(sp.pool, s)
 	sp.mu.Unlock()
 }
