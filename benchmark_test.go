@@ -23,7 +23,7 @@ func BenchmarkTimer_Add(b *testing.B) {
 func BenchmarkTimer_Add_Concurrent(b *testing.B) {
 	now := time.Now().UnixNano()
 	timer := newTimer(time.Second, time.Now().UnixNano(), nil)
-	
+
 	b.RunParallel(func(pb *testing.PB) {
 		b.ReportAllocs()
 		for pb.Next() {
@@ -48,7 +48,7 @@ func BenchmarkWriteToCacheWithMultiShard(b *testing.B) {
 	m := "haha"
 	cache := NewCache(100000, time.Second)
 	defer cache.StopCleanExpired()
-	
+
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cache.Set(fmt.Sprintf("key-%d", i), m)
@@ -70,7 +70,7 @@ func BenchmarkWriteToCacheWithMultiShardAndExp(b *testing.B) {
 	m := "haha"
 	cache := NewCache(100000, time.Second)
 	defer cache.StopCleanExpired()
-	
+
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cache.SetEx(fmt.Sprintf("key-%d", i), m, i)

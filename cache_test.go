@@ -32,15 +32,15 @@ func TestSetEx(t *testing.T) {
 }
 
 var _kvs = map[string]interface{}{
-	"t1": []byte("hello"),
-	"t2": "world",
-	"t3": true,
-	"t4": false,
-	"t5": -123456,
-	"t6": int8(-128),
-	"t7": int16(-129),
-	"t8": int32(-130),
-	"t9": int64(-131),
+	"t1":  []byte("hello"),
+	"t2":  "world",
+	"t3":  true,
+	"t4":  false,
+	"t5":  -123456,
+	"t6":  int8(-128),
+	"t7":  int16(-129),
+	"t8":  int32(-130),
+	"t9":  int64(-131),
 	"t10": uint8(127),
 	"t11": uint16(128),
 	"t12": uint32(129),
@@ -75,15 +75,15 @@ func TestCache_LoadBaseType(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	
+
 	cache := NewCache(3000, time.Millisecond)
 	cache.LoadBaseType(f)
 	var i int
-	
+
 	for _, v := range cache.cache {
 		for key, entry := range v.entries {
 			i++
-			if i & 1023 == 0 {
+			if i&1023 == 0 {
 				return
 			}
 			fmt.Println(key, "-----", entry.value, "-----", entry.expAt)

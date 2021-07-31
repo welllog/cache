@@ -9,9 +9,9 @@ import (
 var _defSlicePool = newSlicePool(100, 100)
 
 type slicePool struct {
-	pool []*slice
-	mu sync.Mutex
-	cap int
+	pool     []*slice
+	mu       sync.Mutex
+	cap      int
 	sliceCap int
 }
 
@@ -73,19 +73,19 @@ func (s *slice) Append(str string) bool {
 	if pos > s.cap || pos < 0 {
 		return false
 	}
-	s.keys[pos - 1] = str
+	s.keys[pos-1] = str
 	return true
 }
 
 func (s *slice) Full() {
-	atomic.AddInt32(&s.idx, s.cap + 1)
+	atomic.AddInt32(&s.idx, s.cap+1)
 }
 
 type bucket struct {
 	slicePool *slicePool
-	full []*slice
-	current unsafe.Pointer
-	mu sync.Mutex
+	full      []*slice
+	current   unsafe.Pointer
+	mu        sync.Mutex
 }
 
 func newBucket(pool *slicePool) *bucket {
@@ -107,7 +107,6 @@ func (b *bucket) Append(str string) {
 	}
 	oldS := (*slice)(oldP)
 
-	
 	if oldS.Append(str) {
 		return
 	}

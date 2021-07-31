@@ -8,23 +8,23 @@ import (
 )
 
 const (
-	_defSlotNum = 1 << 5      // 时间轮每一层槽数
-	_overflowTimerTickMultiple = 8 // 下一层时间轮的间隔时间相当于当前轮间隔时间的倍数
+	_defSlotNum                = 1 << 5 // 时间轮每一层槽数
+	_overflowTimerTickMultiple = 8      // 下一层时间轮的间隔时间相当于当前轮间隔时间的倍数
 )
 
 // 高层时间轮避免向下级联
 type timer struct {
-	curTime int64
-	tick int64
-	interval int64
-	slotNum int
-	slotMask int
-	curSlot int
-	mu sync.RWMutex
-	slots []*bucket
-	overflowSet int32
+	curTime       int64
+	tick          int64
+	interval      int64
+	slotNum       int
+	slotMask      int
+	curSlot       int
+	mu            sync.RWMutex
+	slots         []*bucket
+	overflowSet   int32
 	overflowTimer unsafe.Pointer
-	cache *Cache
+	cache         *Cache
 }
 
 // tick 间隔时间，单位秒
@@ -34,13 +34,13 @@ func newTimer(tick time.Duration, now int64, cache *Cache) *timer {
 		buckets[i] = newBucket(_defSlicePool)
 	}
 	return &timer{
-		curTime: now,
-		tick: int64(tick),
+		curTime:  now,
+		tick:     int64(tick),
 		interval: (int64(_defSlotNum) - 1) * int64(tick),
-		slotNum: _defSlotNum,
+		slotNum:  _defSlotNum,
 		slotMask: _defSlotNum - 1,
-		slots: buckets,
-		cache: cache,
+		slots:    buckets,
+		cache:    cache,
 	}
 }
 
@@ -66,7 +66,7 @@ func (t *timer) Add(key string, expAt int64) {
 	if overflowWheel == nil {
 		if atomic.CompareAndSwapInt32(&t.overflowSet, 0, 1) { // 设置成功
 			t.mu.RLock()
-			overflowWheel = unsafe.Pointer(newTimer(time.Duration(t.tick) * _overflowTimerTickMultiple, t.curTime, t.cache))
+			overflowWheel = unsafe.Pointer(newTimer(time.Duration(t.tick)*_overflowTimerTickMultiple, t.curTime, t.cache))
 			atomic.StorePointer(&t.overflowTimer, overflowWheel)
 			t.mu.RUnlock()
 		} else {
@@ -102,7 +102,7 @@ func (t *timer) advanceClock(now int64) {
 	t.mu.Unlock()
 
 	// ticker获取的时间不一定是精准的t.tick的_overflowTimerTickMultiple倍数
-	if interval > ((int64(_overflowTimerTickMultiple) - 1) * t.tick + t.tick / 2) {
+	if interval > ((int64(_overflowTimerTickMultiple)-1)*t.tick + t.tick/2) {
 		nextTimer.advanceClock(now)
 	}
 
@@ -111,7 +111,7 @@ func (t *timer) advanceClock(now int64) {
 
 func (t *timer) scan(slot int) {
 	t.slots[slot].StopReceiving()
-	cleanKeys := make(map[uint32][]string, t.cache.mask + 1)
+	cleanKeys := make(map[uint32][]string, t.cache.mask+1)
 	for _, s := range t.slots[slot].full {
 		for index, key := range s.keys {
 			if key != "" {

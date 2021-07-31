@@ -27,7 +27,7 @@ func NewCache(keyCountScale uint32, cleanInterval time.Duration) *Cache {
 	out := &Cache{
 		cache: cache,
 		mask:  n - 1,
-		stop: make(chan struct{}),
+		stop:  make(chan struct{}),
 	}
 	if n == 1 {
 		out.indexFn = func(str string, mask uint32) uint32 {
@@ -66,7 +66,7 @@ func (c *Cache) getOrLoad(key string, fn LoadFunc, exp int) (interface{}, error)
 		return val, nil
 	}
 	var (
-		err error
+		err      error
 		isConcur bool
 	)
 	val, err, isConcur = c.cache[i].Load(key, fn)
@@ -107,10 +107,10 @@ func (c *Cache) StopCleanExpired() {
 func (c *Cache) SaveBaseType(w io.Writer) {
 	bw := bufio.NewWriter(w)
 	defer bw.Flush()
-	
+
 	zw, _ := zlib.NewWriterLevel(bw, zlib.BestSpeed)
 	defer zw.Close()
-	
+
 	for _, v := range c.cache {
 		v.SaveBaseType(zw)
 	}
@@ -118,17 +118,17 @@ func (c *Cache) SaveBaseType(w io.Writer) {
 
 func (c *Cache) LoadBaseType(r io.Reader) {
 	br := bufio.NewReader(r)
-	
+
 	zr, _ := zlib.NewReader(br)
-	defer  zr.Close()
-	
+	defer zr.Close()
+
 	now := time.Now().UnixNano()
 	for {
 		kv := &kvItem{}
 		if !kv.InitMetaFromReader(zr) {
 			return
 		}
-		
+
 		expAt := kv.GetExpireAt()
 		if expAt >= 0 && expAt < now {
 			kv.DiscardData(zr)
@@ -137,7 +137,7 @@ func (c *Cache) LoadBaseType(r io.Reader) {
 			if err != nil {
 				return
 			}
-			
+
 			if key != "" && value != nil {
 				if expAt < 0 {
 					c.Set(key, value)

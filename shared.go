@@ -10,7 +10,7 @@ type shared struct {
 	entries map[string]*entry
 	//count   int
 	//delCalled int
-	mu sync.RWMutex
+	mu     sync.RWMutex
 	loader group
 }
 
@@ -21,7 +21,7 @@ type entry struct {
 
 func newShared(cap int) *shared {
 	return &shared{
-		entries:   make(map[string]*entry, cap),
+		entries: make(map[string]*entry, cap),
 	}
 }
 
@@ -102,7 +102,7 @@ func (s *shared) SaveBaseType(w io.Writer) {
 	now := time.Now().UnixNano()
 	s.mu.RLock()
 	for k, v := range s.entries {
-		if v.expAt > now || v.expAt < 0{
+		if v.expAt > now || v.expAt < 0 {
 			kv := &kvItem{}
 			if kv.Build(k, v.value, v.expAt) {
 				kv.SaveTo(w)
