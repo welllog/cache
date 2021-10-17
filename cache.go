@@ -81,7 +81,7 @@ func (c *Cache) getOrLoad(key string, fn LoadFunc, exp int) (interface{}, error)
 			expAt = time.Now().UnixNano() + sToNs(exp)
 			c.timer.Add(key, expAt)
 		}
-		c.cache[i].Set(key, fn, expAt)
+		c.cache[i].Set(key, val, expAt)
 	}
 	return val, nil
 }
