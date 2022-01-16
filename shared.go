@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"io"
 	"sync"
 	"time"
 )
@@ -59,15 +58,16 @@ func (s *shared) Get(key string) (interface{}, bool) {
 	return nil, false
 }
 
-func (s *shared) get(key string) (interface{}, bool) {
+func (s *shared) GetIgnoreExp(key string) (interface{}, int64, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	r, ok := s.entries[key]
-	if ok && (r.expAt < 0 || r.expAt > time.Now().UnixNano()) {
-		return r.value, true
+	if !ok {
+		s.mu.RUnlock()
+		return nil, 0, false
 	}
-	return nil, false
+	val, expAt := r.value, r.expAt
+	s.mu.RUnlock()
+	return val, expAt, true
 }
 
 func (s *shared) Set(key string, value interface{}, expAt int64) {
@@ -94,27 +94,29 @@ func (s *shared) Del(key string) {
 	s.mu.Unlock()
 }
 
+func (s *shared) DelBefore(expAt int64, keys ...string) {
+	s.mu.Lock()
+	for _, key := range keys {
+		s.delBefore(key, expAt)
+	}
+	s.mu.Unlock()
+}
+
 func (s *shared) Load(key string, fn LoadFunc) (interface{}, error, bool) {
 	return s.loader.Do(key, fn)
 }
 
-func (s *shared) SaveBaseType(w io.Writer) {
-	now := time.Now().UnixNano()
+func (s *shared) Scan(handle func(key string, value interface{}, expAt int64)) {
 	s.mu.RLock()
 	for k, v := range s.entries {
-		if v.expAt > now || v.expAt < 0 {
-			kv := &kvItem{}
-			if kv.Build(k, v.value, v.expAt) {
-				kv.SaveTo(w)
-			}
-		}
+		handle(k, v.value, v.expAt)
 	}
 	s.mu.RUnlock()
 }
 
 func (s *shared) delBefore(key string, expAt int64) {
 	val, ok := s.entries[key]
-	if ok && val.expAt <= expAt {
+	if ok && val.expAt >= 0 && val.expAt <= expAt {
 		s.del(key)
 	}
 }

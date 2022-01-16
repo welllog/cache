@@ -6,6 +6,8 @@ import (
 	"unsafe"
 )
 
+const _EMPTY_STR = ""
+
 var _defSlicePool = newSlicePool(100, 100)
 
 type slicePool struct {
@@ -46,10 +48,6 @@ func (sp *slicePool) Put(s *slice) {
 		sp.mu.Unlock()
 		return
 	}
-	s.idx = 0
-	for i := range s.keys {
-		s.keys[i] = ""
-	}
 	sp.pool = append(sp.pool, s)
 	sp.mu.Unlock()
 }
@@ -68,6 +66,7 @@ func newSlice(cap int) *slice {
 	}
 }
 
+// Append 不接受空字符串
 func (s *slice) Append(str string) bool {
 	pos := atomic.AddInt32(&s.idx, 1)
 	if pos > s.cap || pos < 0 {
@@ -77,8 +76,21 @@ func (s *slice) Append(str string) bool {
 	return true
 }
 
-func (s *slice) Full() {
-	atomic.AddInt32(&s.idx, s.cap+1)
+func (s *slice) GetCap() int {
+	return int(s.cap)
+}
+
+// ExportKeys 导出所有keys,并清理当前keys
+func (s *slice) ExportKeys(keys []string) []string {
+	for i, key := range s.keys {
+		if key == _EMPTY_STR {
+			break
+		}
+		keys = append(keys, key)
+		s.keys[i] = _EMPTY_STR
+	}
+	s.idx = 0
+	return keys
 }
 
 type bucket struct {
@@ -96,6 +108,10 @@ func newBucket(pool *slicePool) *bucket {
 
 // Append之间存在并发调用
 func (b *bucket) Append(str string) {
+	if str == _EMPTY_STR {
+		return
+	}
+
 	oldP := atomic.LoadPointer(&b.current)
 	if oldP == nil {
 		first := b.slicePool.Get()
@@ -133,20 +149,24 @@ func (b *bucket) Append(str string) {
 	}
 }
 
-func (b *bucket) StopReceiving() {
+// ExportKeys 导出当前bucket key,并进行清理
+func (b *bucket) ExportKeys() []string {
 	if b.current != nil {
 		s := (*slice)(b.current)
 		b.full = append(b.full, s)
 		b.current = nil
 	}
-}
-
-func (b *bucket) reset() {
-	for i := 0; i < len(b.full); i++ {
+	if len(b.full) == 0 {
+		return []string{}
+	}
+	keys := make([]string, 0, len(b.full)*b.full[0].GetCap())
+	for i := range b.full {
+		keys = b.full[i].ExportKeys(keys)
 		b.slicePool.Put(b.full[i])
 		b.full[i] = nil
 	}
 	b.full = b.full[:0]
+	return keys
 }
 
 func (b *bucket) moveToFull(s *slice) {

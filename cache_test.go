@@ -8,10 +8,7 @@ import (
 )
 
 func TestNewCache(t *testing.T) {
-	cache := NewCache(2000, time.Second)
-	if cache.mask != 3 {
-		t.Error("mask error")
-	}
+	cache := NewCacheWithGC(2, 50, time.Second)
 	cache.Set("t1", 123)
 	val, err := cache.Get("t1")
 	if err != nil {
@@ -23,12 +20,12 @@ func TestNewCache(t *testing.T) {
 }
 
 func TestSetEx(t *testing.T) {
-	cache := NewCache(300, time.Millisecond)
-	cache.SetEx("test", 123, 2)
-	time.Sleep(time.Second)
-	fmt.Println(cache.cache[0].entries["test"])
-	time.Sleep(2 * time.Second)
-	fmt.Println(cache.cache[0].entries["test"])
+	cache := NewCacheWithGC(2, 50, time.Millisecond)
+	cache.SetEx("test", 123, 5*time.Millisecond)
+	time.Sleep(time.Millisecond)
+	fmt.Println(cache.Get("test"))
+	time.Sleep(4 * time.Millisecond)
+	fmt.Println(cache.Get("test"))
 }
 
 var _kvs = map[string]interface{}{
@@ -51,16 +48,13 @@ var _kvs = map[string]interface{}{
 }
 
 func TestCache_SaveBaseType(t *testing.T) {
-	cache := NewCache(10000000, time.Millisecond)
+	cache := NewCache(2, 50)
 	for k, v := range _kvs {
 		cache.Set(k, v)
 	}
-	//for i := 0; i < 10000000; i++  {
-	//	cache.Set("k" + strconv.Itoa(i), i)
-	//}
-	cache.SetEx("t100", 12, 1)
+	cache.SetEx("t100", 12, time.Second)
 	time.Sleep(time.Second)
-	cache.SetEx("t101", true, 10)
+	cache.SetEx("t101", true, 10*time.Second)
 	f, err := os.Create("c.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -74,19 +68,13 @@ func TestCache_LoadBaseType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer os.Remove("c.txt")
 	defer f.Close()
 
-	cache := NewCache(3000, time.Millisecond)
-	cache.LoadBaseType(f)
-	var i int
+	cache := NewCache(2, 50)
+	_ = cache.LoadBaseType(f)
 
-	for _, v := range cache.cache {
-		for key, entry := range v.entries {
-			i++
-			if i&1023 == 0 {
-				return
-			}
-			fmt.Println(key, "-----", entry.value, "-----", entry.expAt)
-		}
-	}
+	cache.Scan(func(key string, value interface{}, expAt int64) {
+		fmt.Println(key, "-----", value, "-----", expAt)
+	})
 }

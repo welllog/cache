@@ -24,23 +24,23 @@ type timer struct {
 	slots         []*bucket
 	overflowSet   int32
 	overflowTimer unsafe.Pointer
-	cache         *Cache
+	expKeysHandle func(int64, []string)
 }
 
 // tick 间隔时间，单位秒
-func newTimer(tick time.Duration, now int64, cache *Cache) *timer {
+func newTimer(tick time.Duration, now int64, handle func(int64, []string)) *timer {
 	buckets := make([]*bucket, _defSlotNum)
 	for i := range buckets {
 		buckets[i] = newBucket(_defSlicePool)
 	}
 	return &timer{
-		curTime:  now,
-		tick:     int64(tick),
-		interval: (int64(_defSlotNum) - 1) * int64(tick),
-		slotNum:  _defSlotNum,
-		slotMask: _defSlotNum - 1,
-		slots:    buckets,
-		cache:    cache,
+		curTime:       now,
+		tick:          int64(tick),
+		interval:      (int64(_defSlotNum) - 1) * int64(tick),
+		slotNum:       _defSlotNum,
+		slotMask:      _defSlotNum - 1,
+		slots:         buckets,
+		expKeysHandle: handle,
 	}
 }
 
@@ -52,7 +52,7 @@ func (t *timer) Add(key string, expAt int64) {
 		if delay <= t.tick {
 			moveSlot = 1
 		} else {
-			moveSlot = int(truncate(delay, t.tick) / t.tick)
+			moveSlot = int(truncate(delay, t.tick))
 		}
 		slot := (t.curSlot + moveSlot) & t.slotMask
 		t.slots[slot].Append(key)
@@ -66,12 +66,14 @@ func (t *timer) Add(key string, expAt int64) {
 	if overflowWheel == nil {
 		if atomic.CompareAndSwapInt32(&t.overflowSet, 0, 1) { // 设置成功
 			t.mu.RLock()
-			overflowWheel = unsafe.Pointer(newTimer(time.Duration(t.tick)*_overflowTimerTickMultiple, t.curTime, t.cache))
+			overflowWheel = unsafe.Pointer(newTimer(time.Duration(t.tick)*_overflowTimerTickMultiple, t.curTime,
+				t.expKeysHandle))
+
 			atomic.StorePointer(&t.overflowTimer, overflowWheel)
 			t.mu.RUnlock()
 		} else {
 			for {
-				time.Sleep(50 * time.Millisecond)
+				time.Sleep(5 * time.Millisecond)
 				overflowWheel = atomic.LoadPointer(&t.overflowTimer)
 				if overflowWheel != nil {
 					break
@@ -83,9 +85,11 @@ func (t *timer) Add(key string, expAt int64) {
 }
 
 func (t *timer) advanceClock(now int64) {
-	var curSlot int
-	var nextTimer *timer
-	var interval int64
+	var (
+		curSlot   int
+		interval  int64
+		nextTimer *timer
+	)
 
 	t.mu.Lock()
 	t.curSlot++
@@ -102,35 +106,17 @@ func (t *timer) advanceClock(now int64) {
 	t.mu.Unlock()
 
 	// ticker获取的时间不一定是精准的t.tick的_overflowTimerTickMultiple倍数
-	if interval > ((int64(_overflowTimerTickMultiple)-1)*t.tick + t.tick/2) {
+	if interval > (int64(_overflowTimerTickMultiple)*t.tick - t.tick/2) {
 		nextTimer.advanceClock(now)
 	}
 
-	t.scan(curSlot)
+	t.scan(curSlot, now)
 }
 
-func (t *timer) scan(slot int) {
-	t.slots[slot].StopReceiving()
-	cleanKeys := make(map[uint32][]string, t.cache.mask+1)
-	for _, s := range t.slots[slot].full {
-		for index, key := range s.keys {
-			if key != "" {
-				s.keys[index] = ""
-				cacheIndex := t.cache.indexFn(key, t.cache.mask)
-				cleanKeys[cacheIndex] = append(cleanKeys[cacheIndex], key)
-			}
-		}
-	}
-
-	t.slots[slot].reset()
-
-	for i := range cleanKeys {
-		now := time.Now().UnixNano()
-		t.cache.cache[i].mu.Lock()
-		for _, key := range cleanKeys[i] {
-			t.cache.cache[i].delBefore(key, now)
-		}
-		t.cache.cache[i].mu.Unlock()
+func (t *timer) scan(slot int, now int64) {
+	keys := t.slots[slot].ExportKeys()
+	if len(keys) > 0 {
+		t.expKeysHandle(now, keys)
 	}
 }
 
@@ -149,8 +135,5 @@ func (t *timer) Run(stop <-chan struct{}) {
 }
 
 func truncate(x, m int64) int64 {
-	if m <= 0 {
-		return x
-	}
-	return x + x%m
+	return x/m + x%m&1
 }

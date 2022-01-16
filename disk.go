@@ -38,8 +38,8 @@ type kvItem struct {
 
 func (k *kvItem) Build(key string, value interface{}, expAt int64) bool {
 	k.key = []byte(key)
-	ksize := len(k.key)
-	if ksize > 65535 {
+	kSize := len(k.key)
+	if kSize > 65535 {
 		return false
 	}
 
@@ -56,11 +56,11 @@ func (k *kvItem) Build(key string, value interface{}, expAt int64) bool {
 	DefaultOrder.PutUint64(k.expire, uint64(expAt))
 
 	k.totalSize = make([]byte, 4)
-	tsize := uint32(3 + ksize + len(k.value))
-	DefaultOrder.PutUint32(k.totalSize, tsize)
+	tSize := uint32(3 + kSize + len(k.value))
+	DefaultOrder.PutUint32(k.totalSize, tSize)
 
 	k.keySize = make([]byte, 2)
-	DefaultOrder.PutUint16(k.keySize, uint16(ksize))
+	DefaultOrder.PutUint16(k.keySize, uint16(kSize))
 
 	return true
 }
@@ -104,14 +104,14 @@ func (k *kvItem) ResolveKvFromReader(r io.Reader) (key string, value interface{}
 		return
 	}
 
-	ksize := int(DefaultOrder.Uint16(k.keySize))
-	k.key = make([]byte, ksize)
-	_, err = io.ReadAtLeast(r, k.key, ksize)
+	kSize := int(DefaultOrder.Uint16(k.keySize))
+	k.key = make([]byte, kSize)
+	_, err = io.ReadAtLeast(r, k.key, kSize)
 	if err != nil {
 		return
 	}
 
-	rest := int(DefaultOrder.Uint32(k.totalSize)) - ksize - 2
+	rest := int(DefaultOrder.Uint32(k.totalSize)) - kSize - 2
 	payload := make([]byte, rest)
 	_, err = io.ReadAtLeast(r, payload, rest)
 	if err != nil {

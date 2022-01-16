@@ -1,7 +1,7 @@
 # cache
 A simple local cache
 
-1. The number of slices is determined by the size of the number of keys. There is no lock competition for reads and writes between slices; locks exist only for reads and writes within the same slice.
+1. There is no lock competition for reads and writes between slices; locks exist only for reads and writes within the same slice.
 
 2. The expiration time of keys is periodically checked for deletion by a time wheel
 
@@ -9,7 +9,7 @@ A simple local cache
 
 一个简单的本地缓存
 
-1. 分片的数量由key数量的大小决定。分片之间的读写不存在锁的竞争，锁只存在于同一分片内的读写。
+1. 分片之间的读写不存在锁的竞争，锁只存在于同一分片内的读写。
 
 2. 通过时间轮定期检查key的过期时间进行删除。
 

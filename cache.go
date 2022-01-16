@@ -8,100 +8,60 @@ import (
 )
 
 type Cache struct {
-	cache   []*shared
-	timer   *timer
-	mask    uint32
-	indexFn func(str string, mask uint32) uint32
-	stop    chan struct{}
+	s sharedSet
 }
 
-func NewCache(keyCountScale uint32, cleanInterval time.Duration) *Cache {
-	n := keyCountScale / _avgKeys
-	// 将n设为2^x
-	n = power2(n)
-	cache := make([]*shared, n)
-	for i := range cache {
-		cache[i] = newShared(_avgKeys)
+func NewCache(sharedNum, sharedCap int) *Cache {
+	return &Cache{
+		s: newCache(sharedNum, sharedCap),
 	}
+}
 
-	out := &Cache{
-		cache: cache,
-		mask:  n - 1,
-		stop:  make(chan struct{}),
+func NewCacheWithGC(sharedNum, sharedCap int, gcInterval time.Duration) *Cache {
+	return &Cache{
+		s: newCacheTimer(sharedNum, sharedCap, gcInterval),
 	}
-	if n == 1 {
-		out.indexFn = func(str string, mask uint32) uint32 {
-			return 0
-		}
-	} else {
-		out.indexFn = func(str string, mask uint32) uint32 {
-			return fnv32(str) & mask
-		}
-	}
-	out.timer = newTimer(cleanInterval, time.Now().UnixNano(), out)
-	out.runCleanExpired()
-	return out
 }
 
 func (c *Cache) Get(key string) (interface{}, error) {
-	val, ok := c.cache[c.indexFn(key, c.mask)].Get(key)
+	value, ok := c.s.Get(c.s.Index(key), key)
 	if !ok {
 		return nil, ErrNil
 	}
-	return val, nil
-}
-
-func (c *Cache) GetOrLoadWithEx(key string, fn LoadFunc, exp int) (interface{}, error) {
-	return c.getOrLoad(key, fn, exp)
-}
-
-func (c *Cache) GetOrLoad(key string, fn LoadFunc) (interface{}, error) {
-	return c.getOrLoad(key, fn, -1)
-}
-
-func (c *Cache) getOrLoad(key string, fn LoadFunc, exp int) (interface{}, error) {
-	i := c.indexFn(key, c.mask)
-	val, ok := c.cache[i].Get(key)
-	if ok {
-		return val, nil
-	}
-	var (
-		err      error
-		isConcur bool
-	)
-	val, err, isConcur = c.cache[i].Load(key, fn)
-	if err != nil {
-		return nil, err
-	}
-	if !isConcur {
-		var expAt int64
-		if exp < 0 {
-			expAt = -1
-		} else {
-			expAt = time.Now().UnixNano() + sToNs(exp)
-			c.timer.Add(key, expAt)
-		}
-		c.cache[i].Set(key, val, expAt)
-	}
-	return val, nil
+	return value, nil
 }
 
 func (c *Cache) Set(key string, value interface{}) {
-	c.cache[c.indexFn(key, c.mask)].Set(key, value, -1)
+	c.s.Set(c.s.Index(key), key, value)
 }
 
-func (c *Cache) SetEx(key string, value interface{}, exp int) {
-	expAt := time.Now().UnixNano() + sToNs(exp)
-	c.timer.Add(key, expAt)
-	c.cache[c.indexFn(key, c.mask)].Set(key, value, expAt)
+func (c *Cache) SetEx(key string, value interface{}, ttl time.Duration) {
+	if ttl < 0 {
+		c.Set(key, value)
+		return
+	}
+	expAt := time.Now().UnixNano() + int64(ttl)
+	c.s.SetEx(c.s.Index(key), key, value, expAt)
 }
 
 func (c *Cache) Del(key string) {
-	c.cache[c.indexFn(key, c.mask)].Del(key)
+	c.s.Del(c.s.Index(key), key)
 }
 
-func (c *Cache) StopCleanExpired() {
-	close(c.stop)
+func (c *Cache) LoadWithEx(key string, fn LoadFunc, ttl time.Duration) (interface{}, error) {
+	return c.load(key, fn, ttl)
+}
+
+func (c *Cache) LoadAsyncWithEx(key string, fn LoadFunc, ttl time.Duration) (interface{}, error) {
+	return c.loadAsync(key, fn, ttl)
+}
+
+func (c *Cache) Load(key string, fn LoadFunc) (interface{}, error) {
+	return c.load(key, fn, -1)
+}
+
+func (c *Cache) Scan(handle func(key string, value interface{}, expAt int64)) {
+	c.s.Scan(handle)
 }
 
 func (c *Cache) SaveBaseType(w io.Writer) {
@@ -111,22 +71,31 @@ func (c *Cache) SaveBaseType(w io.Writer) {
 	zw, _ := zlib.NewWriterLevel(bw, zlib.BestSpeed)
 	defer zw.Close()
 
-	for _, v := range c.cache {
-		v.SaveBaseType(zw)
-	}
+	now := time.Now().UnixNano()
+	c.s.Scan(func(key string, value interface{}, expAt int64) {
+		if expAt > now || expAt < 0 {
+			kv := &kvItem{}
+			if kv.Build(key, value, expAt) {
+				kv.SaveTo(zw)
+			}
+		}
+	})
 }
 
-func (c *Cache) LoadBaseType(r io.Reader) {
+func (c *Cache) LoadBaseType(r io.Reader) error {
 	br := bufio.NewReader(r)
 
-	zr, _ := zlib.NewReader(br)
+	zr, err := zlib.NewReader(br)
+	if err != nil {
+		return err
+	}
 	defer zr.Close()
 
 	now := time.Now().UnixNano()
 	for {
 		kv := &kvItem{}
 		if !kv.InitMetaFromReader(zr) {
-			return
+			return nil
 		}
 
 		expAt := kv.GetExpireAt()
@@ -135,57 +104,81 @@ func (c *Cache) LoadBaseType(r io.Reader) {
 		} else {
 			key, value, err := kv.ResolveKvFromReader(zr)
 			if err != nil {
-				return
+				return err
 			}
 
 			if key != "" && value != nil {
 				if expAt < 0 {
-					c.Set(key, value)
+					c.s.Set(c.s.Index(key), key, value)
 				} else {
-					c.timer.Add(key, expAt)
-					c.cache[c.indexFn(key, c.mask)].Set(key, value, expAt)
+					c.s.SetEx(c.s.Index(key), key, value, expAt)
 				}
 			}
 		}
 	}
 }
 
-func (c *Cache) runCleanExpired() {
-	go func() {
-		c.timer.Run(c.stop)
-	}()
+func (c *Cache) load(key string, fn LoadFunc, ttl time.Duration) (interface{}, error) {
+	i := c.s.Index(key)
+	value, ok := c.s.Get(i, key)
+	if ok {
+		return value, nil
+	}
+	var (
+		err        error
+		concurrent bool
+	)
+	value, err, concurrent = c.s.Load(i, key, fn)
+	if err != nil {
+		return nil, err
+	}
+	if !concurrent {
+		if ttl < 0 {
+			c.s.Set(i, key, value)
+		} else {
+			c.s.SetEx(i, key, value, time.Now().UnixNano()+int64(ttl))
+		}
+	}
+	return value, nil
 }
 
-const _prime32 = uint32(16777619)
-
-func fnv32(str string) uint32 {
-	hash := uint32(2166136261)
-	for i := 0; i < len(str); i++ {
-		hash *= _prime32
-		hash ^= uint32(str[i])
+func (c *Cache) loadAsync(key string, fn LoadFunc, ttl time.Duration) (interface{}, error) {
+	i := c.s.Index(key)
+	value, expAt, ok := c.s.GetIgnoreExp(i, key)
+	if ok {
+		if expAt >= 0 && expAt < time.Now().UnixNano() { // 过期异步加载
+			go func(k string, e time.Duration, i uint32, f func() (interface{}, error)) {
+				v, err, concurrent := c.s.Load(i, k, f)
+				if err != nil {
+					return
+				}
+				if concurrent {
+					return
+				}
+				if e < 0 {
+					c.s.Set(i, k, v)
+				} else {
+					c.s.SetEx(i, k, v, time.Now().UnixNano()+int64(e))
+				}
+			}(key, ttl, i, fn)
+		}
+		return value, nil
 	}
-	return hash
-}
-
-func power2(n uint32) uint32 {
-	if n <= 1 {
-		return 1
+	var (
+		err        error
+		concurrent bool
+	)
+	// 不存在同步加载
+	value, err, concurrent = c.s.Load(i, key, fn)
+	if err != nil {
+		return nil, err
 	}
-	if n&(n-1) == 0 {
-		return n
+	if !concurrent {
+		if ttl < 0 {
+			c.s.Set(i, key, value)
+		} else {
+			c.s.SetEx(i, key, value, time.Now().UnixNano()+int64(ttl))
+		}
 	}
-	n = n - 1
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
-	if n > _maxShareds {
-		return _maxShareds
-	}
-	return n + 1
-}
-
-func sToNs(s int) int64 {
-	return int64(s) * 1000000000
+	return value, nil
 }

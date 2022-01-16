@@ -14,6 +14,7 @@ func BenchmarkTimer_Add(b *testing.B) {
 	now := time.Now().UnixNano()
 	timer := newTimer(time.Second, time.Now().UnixNano(), nil)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		timer.Add(fmt.Sprintf("key-%d", i), now)
 		now += 1000000000
@@ -23,157 +24,91 @@ func BenchmarkTimer_Add(b *testing.B) {
 func BenchmarkTimer_Add_Concurrent(b *testing.B) {
 	now := time.Now().UnixNano()
 	timer := newTimer(time.Second, time.Now().UnixNano(), nil)
-
+	b.ReportAllocs()
+	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		b.ReportAllocs()
 		for pb.Next() {
-			timer.Add(fmt.Sprintf("key-%d", rand.Intn(b.N)), now)
-			now += 1000000000
+			timer.Add(fmt.Sprintf("key-%d", rand.Int63()), now)
 		}
 	})
 }
 
-func BenchmarkWriteToCacheWith1Shard(b *testing.B) {
-	m := "haha"
-	cache := NewCache(600, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		cache.Set(fmt.Sprintf("key-%d", i), m)
-	}
-}
-
-func BenchmarkWriteToCacheWithMultiShard(b *testing.B) {
-	m := "haha"
-	cache := NewCache(100000, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		cache.Set(fmt.Sprintf("key-%d", i), m)
-	}
-}
-
-func BenchmarkWriteToCacheWith1ShardAndExp(b *testing.B) {
-	m := "haha"
-	cache := NewCache(600, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		cache.SetEx(fmt.Sprintf("key-%d", i), m, i)
-	}
-}
-
-func BenchmarkWriteToCacheWithMultiShardAndExp(b *testing.B) {
-	m := "haha"
-	cache := NewCache(100000, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		cache.SetEx(fmt.Sprintf("key-%d", i), m, i)
-	}
-}
-
 func BenchmarkWriteToCache(b *testing.B) {
-	for _, count := range []int{10000, 100000, 500000} {
-		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			writeToCache(b, uint32(count))
-		})
-	}
-}
-
-func BenchmarkWriteToCacheWithExp(b *testing.B) {
-	for _, count := range []int{10000, 100000, 500000} {
-		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			writeToCacheWithExp(b, uint32(count))
-		})
+	for _, num := range []int{1, 32, 64} {
+		writeToCache(b, num)
+		writeToCacheWithGC(b, num)
 	}
 }
 
 func BenchmarkReadFromCache(b *testing.B) {
-	for _, count := range []int{600, 10000, 100000, 500000} {
-		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			readFromCache(b, uint32(count))
+	for _, num := range []int{1, 32, 64} {
+		readFromCache(b, num)
+		readFromCacheWithGC(b, num)
+	}
+}
+
+func writeToCache(b *testing.B, num int) {
+	b.Run(fmt.Sprintf("%d-shared", num), func(b *testing.B) {
+		cache := NewCache(num, 10000)
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				cache.Set(fmt.Sprintf("key-%d", rand.Int63()), 1)
+			}
 		})
-	}
+	})
 }
 
-func BenchmarkReadFromCacheNonExistentKeys(b *testing.B) {
-	for _, count := range []int{600, 10000, 100000, 500000} {
-		b.Run(fmt.Sprintf("%d-scale", count), func(b *testing.B) {
-			readFromCacheNonExistentKeys(b, uint32(count))
+func writeToCacheWithGC(b *testing.B, num int) {
+	b.Run(fmt.Sprintf("%d-shared-with-gc", num), func(b *testing.B) {
+		cache := NewCacheWithGC(num, 10000, 50*time.Millisecond)
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				cache.SetEx(fmt.Sprintf("key-%d", rand.Int63()), 1, 80*time.Millisecond)
+			}
 		})
-	}
-}
-
-func writeToCache(b *testing.B, keyCountCale uint32) {
-	cache := NewCache(keyCountCale, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
-		id := rand.Int()
-		counter := 0
-
-		b.ReportAllocs()
-		for pb.Next() {
-			cache.Set(fmt.Sprintf("key-%d-%d", id, counter), message)
-			counter = counter + 1
-		}
 	})
 }
 
-func writeToCacheWithExp(b *testing.B, keyCountCale uint32) {
-	cache := NewCache(keyCountCale, time.Second)
-	defer cache.StopCleanExpired()
+func readFromCache(b *testing.B, num int) {
+	b.Run(fmt.Sprintf("%d-shared", num), func(b *testing.B) {
+		cache := NewCache(num, 10000)
 
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
-		id := rand.Int()
-		counter := 0
+		for i := 0; i < b.N; i++ {
+			cache.Set(strconv.Itoa(i), message)
+		}
 
 		b.ReportAllocs()
-		for pb.Next() {
-			cache.SetEx(fmt.Sprintf("key-%d-%d", id, counter), message, counter)
-			counter = counter + 1
-		}
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				cache.Get(strconv.Itoa(rand.Intn(b.N)))
+			}
+		})
 	})
 }
 
-func readFromCache(b *testing.B, keyCountCale uint32) {
-	cache := NewCache(keyCountCale, time.Second)
-	defer cache.StopCleanExpired()
+func readFromCacheWithGC(b *testing.B, num int) {
+	b.Run(fmt.Sprintf("%d-shared-with-gc", num), func(b *testing.B) {
+		cache := NewCacheWithGC(num, 10000, 50*time.Millisecond)
 
-	for i := 0; i < b.N; i++ {
-		cache.Set(strconv.Itoa(i), message)
-	}
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
-		b.ReportAllocs()
-
-		for pb.Next() {
-			cache.Get(strconv.Itoa(rand.Intn(b.N)))
+		for i := 0; i < b.N; i++ {
+			cache.SetEx(strconv.Itoa(i), message, 80*time.Millisecond)
 		}
-	})
-}
 
-func readFromCacheNonExistentKeys(b *testing.B, keyCountCale uint32) {
-	cache := NewCache(keyCountCale, time.Second)
-	defer cache.StopCleanExpired()
-
-	b.ResetTimer()
-
-	b.RunParallel(func(pb *testing.PB) {
 		b.ReportAllocs()
+		b.ResetTimer()
 
-		for pb.Next() {
-			cache.Get(strconv.Itoa(rand.Intn(b.N)))
-		}
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				cache.Get(strconv.Itoa(rand.Intn(b.N)))
+			}
+		})
 	})
 }
