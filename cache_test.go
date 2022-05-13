@@ -59,21 +59,12 @@ func TestCache_SaveBaseType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	cache.SaveBaseType(f)
-}
-
-func TestCache_LoadBaseType(t *testing.T) {
-	f, err := os.Open("c.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer os.Remove("c.txt")
 	defer f.Close()
+	cache.SaveBaseType(f)
 
-	cache := NewCache(2, 50)
-	_ = cache.LoadBaseType(f)
-
+	cache2 := NewCache(2, 50)
+	_ = cache2.LoadBaseType(f)
 	cache.Scan(func(key string, value interface{}, expAt int64) {
 		fmt.Println(key, "-----", value, "-----", expAt)
 	})

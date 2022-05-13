@@ -83,7 +83,7 @@ func TestShared_Load(t *testing.T) {
 		go func() {
 			defer w.Done()
 			_, _, ok := s.Load("t1", func() (interface{}, error) {
-				time.Sleep(time.Microsecond)
+				time.Sleep(time.Millisecond)
 				return 1, nil
 			})
 			ch <- ok
@@ -93,7 +93,7 @@ func TestShared_Load(t *testing.T) {
 	go func() {
 		defer w.Done()
 		_, err, ok := s.Load("t1", func() (interface{}, error) {
-			time.Sleep(time.Microsecond)
+			time.Sleep(time.Millisecond)
 			panic("test panic")
 		})
 		ch <- ok

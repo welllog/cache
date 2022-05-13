@@ -2,6 +2,9 @@ package cache
 
 import (
 	"errors"
+	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -37,7 +40,16 @@ func (g *group) Do(key string, fn func() (interface{}, error)) (value interface{
 	nf := func() (val interface{}, err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				val, err = nil, _errLoad
+				var pcs [3]uintptr
+				n := runtime.Callers(3, pcs[:])
+				var str strings.Builder
+				str.WriteString(fmt.Sprintf("load panic: %v", r) + "\nTraceback:")
+				for _, pc := range pcs[:n] {
+					fn := runtime.FuncForPC(pc)
+					file, line := fn.FileLine(pc)
+					str.WriteString(fmt.Sprintf("\n\t%s:%d", file, line))
+				}
+				val, err = nil, errors.New(str.String())
 			}
 		}()
 		val, err = fn()
