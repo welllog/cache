@@ -54,22 +54,20 @@ func (sp *slicePool) Put(s *slice) {
 
 type slice struct {
 	idx  int32
-	cap  int32
 	keys []string
 }
 
 func newSlice(cap int) *slice {
 	return &slice{
 		idx:  0,
-		cap:  int32(cap),
 		keys: make([]string, cap),
 	}
 }
 
-// Append 不接受空字符串
+// Append 不能接受空字符串
 func (s *slice) Append(str string) bool {
 	pos := atomic.AddInt32(&s.idx, 1)
-	if pos > s.cap || pos < 0 {
+	if int(pos) > cap(s.keys) || pos < 0 {
 		return false
 	}
 	s.keys[pos-1] = str
@@ -77,7 +75,7 @@ func (s *slice) Append(str string) bool {
 }
 
 func (s *slice) GetCap() int {
-	return int(s.cap)
+	return cap(s.keys)
 }
 
 // ExportKeys 导出所有keys,并清理当前keys
@@ -157,7 +155,7 @@ func (b *bucket) ExportKeys() []string {
 		b.current = nil
 	}
 	if len(b.full) == 0 {
-		return []string{}
+		return nil
 	}
 	keys := make([]string, 0, len(b.full)*b.full[0].GetCap())
 	for i := range b.full {
